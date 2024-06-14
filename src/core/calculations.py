@@ -103,19 +103,21 @@ class Calculations(QObject):
 
     def _prepare_and_start_optimization(self, response: dict):
         try:
+            file_name = response['file_name']
             combined_keys = response['combined_keys']
             bounds = response['bounds']
             reaction_combinations = response['reaction_combinations']
             experimental_data = response['experimental_data']
 
-            target_function = self.generate_target_function(combined_keys, reaction_combinations, experimental_data)
+            target_function = self.generate_target_function(
+                combined_keys, reaction_combinations, experimental_data, file_name)
 
             self.start_differential_evolution(bounds=bounds, target_function=target_function)
         except Exception as e:
             logger.error(f"Ошибка при подготовке и запуске оптимизации: {e}")
 
     def generate_target_function(self, combined_keys: dict, reaction_combinations: list[tuple],
-                                 experimental_data: pd.DataFrame):
+                                 experimental_data: pd.DataFrame, file_name: str):
 
         def target_function(params):
             best_mse = float('inf')
@@ -157,7 +159,13 @@ class Calculations(QObject):
                 if mse < best_mse:
                     best_mse = mse
                     best_combination = combination
-            self.new_best_result.emit({'best_mse': best_mse, 'best_combination': best_combination})
+            self.new_best_result.emit({
+                'best_mse': best_mse,
+                'best_combination': best_combination,
+                'file_name': file_name,
+                'params': params,
+                'combined_keys': combined_keys
+            })
             return best_mse
         return target_function
 
@@ -187,12 +195,20 @@ class Calculations(QObject):
     def handle_new_best_result(self, result: dict):
         best_mse = result['best_mse']
         best_combination = result['best_combination']
+        params = result['params']
+        combined_keys = result['combined_keys']
         if best_mse < self.best_mse:
             self.best_mse = best_mse
             self.best_combination = best_combination
             console.log(f"Новый лучший результат:\n"
                         f"Лучшее MSE: {best_mse}\n"
                         f"Комбинация реакций: {best_combination}\n\n")
+            self.modify_calculations_data_slot({
+                'path_keys': [result['file_name']],
+                'operation': 'update_optimization_coeffs',
+                'params': params,
+                'combined_keys': combined_keys
+            })
 
     @pyqtSlot(bool)
     def calc_data_operations_in_progress(self, in_progress: bool):
@@ -247,7 +263,8 @@ class CalculationsDataOperations:
             "remove_reaction": self.remove_reaction,
             "highlight_reaction": self.highlight_reaction,
             "update_value": self.update_value,
-            "deconvolution": self.deconvolution
+            "deconvolution": self.deconvolution,
+            "update_optimization_coeffs": self.update_optimization_coeffs
         }
 
         if operation in operations:
@@ -363,8 +380,9 @@ class CalculationsDataOperations:
                 self.calculations_data.set_value(path_keys.copy(), new_value)
                 logger.info(f"Данные по пути: {path_keys}\n изменены на: {new_value}")
 
-                self._update_coeffs_value(path_keys.copy(), new_value)
-                return {"operation": "update_value", "data": None}
+                if 'upper_bound_coeffs' in path_keys or 'lower_bound_coeffs' in path_keys:
+                    self._update_coeffs_value(path_keys.copy(), new_value)
+                    return {"operation": "update_value", "data": None}
             else:
                 logger.error(f"Все данные: {self.calculations_data._data}")
                 logger.error(f"Данных по пути: {path_keys} не найдено.")
@@ -407,9 +425,39 @@ class CalculationsDataOperations:
         return {
             'operation': 'deconvolution',
             'data': {
+                'file_name': file_name,
                 'combined_keys': combined_keys,
                 'bounds': bounds,
                 'reaction_combinations': reaction_combinations,
                 'experimental_data': self.calculations.file_data.dataframe_copies[file_name],
             }
         }
+
+    def update_optimization_coeffs(self, path_keys: list[str], params: dict):
+        try:
+            combined_keys = params.get('combined_keys')
+            new_params = params.get('params')
+
+            if combined_keys is None or len(combined_keys) == 0:
+                logger.error("combined_keys отсутствуют или пусты")
+                return
+            if new_params is None or len(new_params) == 0:
+                logger.error("params отсутствуют или пусты")
+                return
+
+            logger.debug(f"Начало обновления коэффициентов оптимизации:\n\
+                           combined_keys={combined_keys},\n\
+                           new_params={new_params}")
+
+            param_idx = 0
+            ordered_keys = ['h', 'z', 'w', 'fr', 'ads1', 'ads2']
+            for reaction, keys in combined_keys.items():
+                for key in ordered_keys:
+                    if key in keys:
+                        new_path_keys = path_keys + [reaction, 'coeffs', key]
+                        update_params = {'value': new_params[param_idx]}
+                        self.update_value(new_path_keys, update_params)
+                        param_idx += 1
+
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении коэффициентов оптимизации: {str(e)}")
