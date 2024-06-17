@@ -104,19 +104,19 @@ class Calculations(QObject):
     def _prepare_and_start_optimization(self, response: dict):
         try:
             bounds = response.pop('bounds')
-            target_function = self.generate_target_function(response)
+            target_function_params = {
+                'combined_keys': response['combined_keys'],
+                'reaction_combinations': response['reaction_combinations'],
+                'experimental_data': response['experimental_data'],
+                'file_name': response['file_name'],
+                'y_true': response['experimental_data'].iloc[:, 1].to_numpy()
+            }
             self.best_mse = float('inf')
-            self.start_differential_evolution(bounds=bounds, target_function=target_function)
+            self.start_differential_evolution(bounds=bounds, target_function_params=target_function_params)
         except Exception as e:
             logger.error(f"Ошибка при подготовке и запуске оптимизации: {e}")
 
-    def generate_target_function(self, params: dict):
-        combined_keys = params['combined_keys']
-        reaction_combinations = params['reaction_combinations']
-        experimental_data = params['experimental_data']
-        file_name = params['file_name']
-        y_true = experimental_data.iloc[:, 1].to_numpy()
-
+    def generate_target_function(self, combined_keys, reaction_combinations, experimental_data, file_name, y_true):
         def target_function(opt_params):
             best_mse = float('inf')
             best_combination = None
@@ -134,7 +134,7 @@ class Calculations(QObject):
                     if len(func_params) < 3:
                         raise ValueError("Недостаточно параметров для функции.")
 
-                    h, z, w = func_params[0:3]  # First coefficients are universal for all functions
+                    h, z, w = func_params[0:3]
                     func_idx = 3
                     if func == 'gauss':
                         reaction_values = cft.gaussian(x, h, z, w)
@@ -159,19 +159,20 @@ class Calculations(QObject):
             self.new_best_result.emit({
                 'best_mse': best_mse,
                 'best_combination': best_combination,
-                'file_name': file_name,
                 'params': opt_params,
                 'combined_keys': combined_keys,
+                'file_name': file_name
             })
             return best_mse
         return target_function
 
     @add_default_kwargs
     def start_differential_evolution(self, bounds, *args, **kwargs):
-        if 'target_function' not in kwargs:
-            raise ValueError("Необходимо передать 'target_function' в аргументах kwargs")
+        if 'target_function_params' not in kwargs:
+            raise ValueError("Необходимо передать 'target_function_params' в аргументах kwargs")
 
-        target_function = kwargs.pop('target_function')
+        target_function_params = kwargs.pop('target_function_params')
+        target_function = self.generate_target_function(**target_function_params)
         callback = kwargs.pop('callback', None)
 
         logger.debug(f"Starting differential evolution with bounds: {bounds} and kwargs: {kwargs}")
