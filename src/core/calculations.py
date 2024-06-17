@@ -103,23 +103,21 @@ class Calculations(QObject):
 
     def _prepare_and_start_optimization(self, response: dict):
         try:
-            file_name = response['file_name']
-            combined_keys = response['combined_keys']
-            bounds = response['bounds']
-            reaction_combinations = response['reaction_combinations']
-            experimental_data = response['experimental_data']
-
-            target_function = self.generate_target_function(
-                combined_keys, reaction_combinations, experimental_data, file_name)
-
+            bounds = response.pop('bounds')
+            target_function = self.generate_target_function(response)
+            self.best_mse = float('inf')
             self.start_differential_evolution(bounds=bounds, target_function=target_function)
         except Exception as e:
             logger.error(f"Ошибка при подготовке и запуске оптимизации: {e}")
 
-    def generate_target_function(self, combined_keys: dict, reaction_combinations: list[tuple],
-                                 experimental_data: pd.DataFrame, file_name: str):
+    def generate_target_function(self, params: dict):
+        combined_keys = params['combined_keys']
+        reaction_combinations = params['reaction_combinations']
+        experimental_data = params['experimental_data']
+        file_name = params['file_name']
+        y_true = experimental_data.iloc[:, 1].to_numpy()
 
-        def target_function(params):
+        def target_function(opt_params):
             best_mse = float('inf')
             best_combination = None
             mse_dict = {}
@@ -128,13 +126,13 @@ class Calculations(QObject):
                 param_idx = 0
                 for (reaction, coeffs), func in zip(combined_keys.items(), combination):
                     coeff_count = len(coeffs)
-                    func_params = params[param_idx:param_idx + coeff_count]
+                    func_params = opt_params[param_idx:param_idx + coeff_count]
                     param_idx += coeff_count
 
                     x = experimental_data['temperature']
 
                     if len(func_params) < 3:
-                        raise ValueError("Not enough parameters for the function.")
+                        raise ValueError("Недостаточно параметров для функции.")
 
                     h, z, w = func_params[0:3]  # First coefficients are universal for all functions
                     func_idx = 3
@@ -143,17 +141,16 @@ class Calculations(QObject):
                         cumulative_function += reaction_values
 
                     if func == 'fraser':
-                        fs = func_params[func_idx]
-                        reaction_values = cft.fraser_suzuki(x, h, z, w, fs)
+                        fr = func_params[func_idx]
+                        reaction_values = cft.fraser_suzuki(x, h, z, w, fr)
                         cumulative_function += reaction_values
 
                     if func == 'ads':
-                        ads1 = func_params[func_idx] if 'fs' not in coeffs else func_params[func_idx + 1]
-                        ads2 = func_params[func_idx + 1] if 'fs' not in coeffs else func_params[func_idx + 2]
+                        ads1 = func_params[func_idx] if 'fr' not in coeffs else func_params[func_idx + 1]
+                        ads2 = func_params[func_idx + 1] if 'fr' not in coeffs else func_params[func_idx + 2]
                         reaction_values = cft.asymmetric_double_sigmoid(x, h, z, w, ads1, ads2)
                         cumulative_function += reaction_values
 
-                y_true = experimental_data.iloc[:, 1].to_numpy()
                 mse = np.mean((y_true - cumulative_function) ** 2)
                 mse_dict[combination] = mse
                 if mse < best_mse:
@@ -163,8 +160,8 @@ class Calculations(QObject):
                 'best_mse': best_mse,
                 'best_combination': best_combination,
                 'file_name': file_name,
-                'params': params,
-                'combined_keys': combined_keys
+                'params': opt_params,
+                'combined_keys': combined_keys,
             })
             return best_mse
         return target_function
@@ -270,7 +267,7 @@ class CalculationsDataOperations:
         if operation in operations:
             response = operations[operation](path_keys, params)
             if response:
-                if operation == "update_value":
+                if operation in ["update_value", "update_optimization_coeffs"]:
                     self.protected_plot_update_curves(path_keys, params)
                 if operation == "deconvolution":
                     return response["data"]
