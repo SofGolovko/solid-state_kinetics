@@ -101,9 +101,9 @@ class CurveFitting:
         return h * np.exp(-((x - z) ** 2) / (2 * w ** 2))
 
     @staticmethod
-    def fraser_suzuki(x: np.ndarray, h: float, z: float, w: float, fs: float) -> np.ndarray:
+    def fraser_suzuki(x: np.ndarray, h: float, z: float, w: float, fr: float) -> np.ndarray:
         with np.errstate(divide='ignore', invalid='ignore'):
-            result = h * np.exp(-np.log(2) * ((np.log(1 + 2 * fs * ((x - z) / w)) / fs) ** 2))
+            result = h * np.exp(-np.log(2) * ((np.log(1 + 2 * fr * ((x - z) / w)) / fr) ** 2))
         result = np.nan_to_num(result, nan=0)
         return result
 
