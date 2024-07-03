@@ -87,7 +87,7 @@ class FileTransferButtons(QWidget):
                     except IOError as e:
                         QMessageBox.warning(self, "Ошибка", f"Ошибка загрузки таблицы: {e}")
                 else:
-                    QMessageBox.warning(self, "Ошибка", "Таблица с функциями не найдена.")
+                    QMessageBox.warning(self, "Ошибка", "Таблица с функциями не обнаружена.")
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Ошибка при загрузке файла: {e}")
 
